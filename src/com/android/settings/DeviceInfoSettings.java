@@ -29,8 +29,11 @@ import android.os.UserHandle;
 import android.preference.Preference;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceScreen;
+import android.telephony.MSimTelephonyManager;
 import android.util.Log;
 import android.widget.Toast;
+
+import com.android.settings.deviceinfo.msim.MSimStatus;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
@@ -71,6 +74,7 @@ public class DeviceInfoSettings extends RestrictedSettingsFragment {
     private static final String KEY_DEVICE_CPU = "device_cpu";
     private static final String KEY_DEVICE_MEMORY = "device_memory";
     private static final String KEY_CM_UPDATES = "cm_updates";
+    private static final String KEY_STATUS = "status_info";
 
     static final int TAPS_TO_BE_A_DEVELOPER = 7;
     long[] mHits = new long[3];
@@ -112,6 +116,11 @@ public class DeviceInfoSettings extends RestrictedSettingsFragment {
             setStringSummary(KEY_SELINUX_STATUS, status);
         }
 
+        if (MSimTelephonyManager.getDefault().isMultiSimEnabled()) {
+            findPreference(KEY_STATUS).getIntent().setClassName(
+                    getActivity().getPackageName(), MSimStatus.class.getName());
+        }
+
         // Remove selinux information if property is not present
         removePreferenceIfPropertyMissing(getPreferenceScreen(), KEY_SELINUX_STATUS,
                 PROPERTY_SELINUX_STATUS);
@@ -147,7 +156,8 @@ public class DeviceInfoSettings extends RestrictedSettingsFragment {
                 PROPERTY_EQUIPMENT_ID);
 
         // Remove Baseband version if wifi-only device
-        if (Utils.isWifiOnly(getActivity())) {
+        if (Utils.isWifiOnly(getActivity())
+                || (MSimTelephonyManager.getDefault().isMultiSimEnabled())) {
             getPreferenceScreen().removePreference(findPreference(KEY_BASEBAND_VERSION));
         }
 
