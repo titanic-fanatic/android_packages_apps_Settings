@@ -54,6 +54,7 @@ import android.preference.CheckBoxPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceChangeListener;
+import android.preference.Preference.OnPreferenceClickListener;
 import android.preference.PreferenceGroup;
 import android.preference.PreferenceScreen;
 import android.provider.Settings;
@@ -82,7 +83,8 @@ import java.util.List;
  */
 public class DevelopmentSettings extends RestrictedSettingsFragment
         implements DialogInterface.OnClickListener, DialogInterface.OnDismissListener,
-                OnPreferenceChangeListener, CompoundButton.OnCheckedChangeListener {
+                OnPreferenceChangeListener, CompoundButton.OnCheckedChangeListener,
+                OnPreferenceClickListener {
     private static final String TAG = "DevelopmentSettings";
 
     /**
@@ -105,6 +107,7 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
     private static final String SELECT_RUNTIME_KEY = "select_runtime";
     private static final String SELECT_RUNTIME_PROPERTY = "persist.sys.dalvik.vm.lib";
     private static final String ALLOW_MOCK_LOCATION = "allow_mock_location";
+    private static final String ALLOW_MOCK_SMS = "allow_mock_sms";
     private static final String HDCP_CHECKING_KEY = "hdcp_checking";
     private static final String HDCP_CHECKING_PROPERTY = "persist.sys.hdcp_checking";
     private static final String LOCAL_BACKUP_PASSWORD = "local_backup_password";
@@ -190,6 +193,7 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
     private CheckBoxPreference mBtHciSnoopLog;
     private CheckBoxPreference mQuickBoot;
     private CheckBoxPreference mAllowMockLocation;
+    private CheckBoxPreference mAllowMockSMS;
     private PreferenceScreen mPassword;
 
     private String mDebugApp;
@@ -213,9 +217,9 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
     private ListPreference mDebugHwOverdraw;
     private ListPreference mTrackFrameTime;
     private ListPreference mShowNonRectClip;
-    private ListPreference mWindowAnimationScale;
-    private ListPreference mTransitionAnimationScale;
-    private ListPreference mAnimatorDurationScale;
+    private AnimationScalePreference mWindowAnimationScale;
+    private AnimationScalePreference mTransitionAnimationScale;
+    private AnimationScalePreference mAnimatorDurationScale;
     private ListPreference mOverlayDisplayDevices;
     private ListPreference mOpenGLTraces;
 
@@ -295,6 +299,7 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
         mBtHciSnoopLog = findAndInitCheckboxPref(BT_HCI_SNOOP_LOG);
         mQuickBoot = findAndInitCheckboxPref(ENABLE_QUICKBOOT_KEY);
         mAllowMockLocation = findAndInitCheckboxPref(ALLOW_MOCK_LOCATION);
+        mAllowMockSMS = findAndInitCheckboxPref(ALLOW_MOCK_SMS);
         mPassword = (PreferenceScreen) findPreference(LOCAL_BACKUP_PASSWORD);
         mAllPrefs.add(mPassword);
         mAdvancedReboot = findAndInitCheckboxPref(ADVANCED_REBOOT_KEY);
@@ -342,11 +347,12 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
         mForceRtlLayout = findAndInitCheckboxPref(FORCE_RTL_LAYOUT_KEY);
         mDebugHwOverdraw = addListPreference(DEBUG_HW_OVERDRAW_KEY);
         mWifiDisplayCertification = findAndInitCheckboxPref(WIFI_DISPLAY_CERTIFICATION_KEY);
-        mWindowAnimationScale = addListPreference(WINDOW_ANIMATION_SCALE_KEY);
-        mTransitionAnimationScale = addListPreference(TRANSITION_ANIMATION_SCALE_KEY);
-        mAnimatorDurationScale = addListPreference(ANIMATOR_DURATION_SCALE_KEY);
         mOverlayDisplayDevices = addListPreference(OVERLAY_DISPLAY_DEVICES_KEY);
         mOpenGLTraces = addListPreference(OPENGL_TRACES_KEY);
+
+        mWindowAnimationScale = findAndInitAnimationScalePreference(WINDOW_ANIMATION_SCALE_KEY);
+        mTransitionAnimationScale = findAndInitAnimationScalePreference(TRANSITION_ANIMATION_SCALE_KEY);
+        mAnimatorDurationScale = findAndInitAnimationScalePreference(ANIMATOR_DURATION_SCALE_KEY);
 
         mImmediatelyDestroyActivities = (CheckBoxPreference) findPreference(
                 IMMEDIATELY_DESTROY_ACTIVITIES_KEY);
@@ -395,6 +401,14 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
             pref.setEnabled(false);
             mDisabledPrefs.add(pref);
         }
+    }
+
+    private AnimationScalePreference findAndInitAnimationScalePreference(String key) {
+        AnimationScalePreference pref = (AnimationScalePreference) findPreference(key);
+        pref.setOnPreferenceChangeListener(this);
+        pref.setOnPreferenceClickListener(this);
+        mAllPrefs.add(pref);
+        return pref;
     }
 
     private CheckBoxPreference findAndInitCheckboxPref(String key) {
@@ -549,6 +563,8 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
         updateAdbOverNetwork();
         updateCheckBox(mAllowMockLocation, Settings.Secure.getInt(cr,
                 Settings.Secure.ALLOW_MOCK_LOCATION, 0) != 0);
+        updateCheckBox(mAllowMockSMS, Settings.Secure.getInt(cr,
+                Settings.Secure.ALLOW_MOCK_SMS, 0) != 0);
         updateCheckBox(mQuickBoot, Settings.Global.getInt(cr,
                 Settings.Global.ENABLE_QUICKBOOT, 0) != 0);
         updateRuntimeValue();
@@ -1192,23 +1208,13 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
             getActivity().getContentResolver(), Settings.Global.ALWAYS_FINISH_ACTIVITIES, 0) != 0);
     }
 
-    private void updateAnimationScaleValue(int which, ListPreference pref) {
+    private void updateAnimationScaleValue(int which, AnimationScalePreference pref) {
         try {
             float scale = mWindowManager.getAnimationScale(which);
             if (scale != 1) {
                 mHaveDebugSettings = true;
             }
-            CharSequence[] values = pref.getEntryValues();
-            for (int i=0; i<values.length; i++) {
-                float val = Float.parseFloat(values[i].toString());
-                if (scale <= val) {
-                    pref.setValueIndex(i);
-                    pref.setSummary(pref.getEntries()[i]);
-                    return;
-                }
-            }
-            pref.setValueIndex(values.length-1);
-            pref.setSummary(pref.getEntries()[0]);
+            pref.setScale(scale);
         } catch (RemoteException e) {
         }
     }
@@ -1219,7 +1225,8 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
         updateAnimationScaleValue(2, mAnimatorDurationScale);
     }
 
-    private void writeAnimationScaleOption(int which, ListPreference pref, Object newValue) {
+    private void writeAnimationScaleOption(int which, AnimationScalePreference pref,
+            Object newValue) {
         try {
             float scale = newValue != null ? Float.parseFloat(newValue.toString()) : 1;
             mWindowManager.setAnimationScale(which, scale);
@@ -1366,6 +1373,16 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
     }
 
     @Override
+    public boolean onPreferenceClick(Preference preference) {
+        if (preference == mWindowAnimationScale ||
+                preference == mTransitionAnimationScale ||
+                preference == mAnimatorDurationScale) {
+            ((AnimationScalePreference) preference).click();
+        }
+        return false;
+    }
+
+    @Override
     public boolean onPreferenceTreeClick(PreferenceScreen preferenceScreen, Preference preference) {
         if (Utils.isMonkeyRunning()) {
             return false;
@@ -1441,6 +1458,10 @@ public class DevelopmentSettings extends RestrictedSettingsFragment
             Settings.Secure.putInt(getActivity().getContentResolver(),
                     Settings.Secure.ALLOW_MOCK_LOCATION,
                     mAllowMockLocation.isChecked() ? 1 : 0);
+        } else if (preference == mAllowMockSMS) {
+            Settings.Secure.putInt(getActivity().getContentResolver(),
+                    Settings.Secure.ALLOW_MOCK_SMS,
+                    mAllowMockSMS.isChecked() ? 1 : 0);
         } else if (preference == mQuickBoot) {
             Settings.Global.putInt(getActivity().getContentResolver(),
                     Settings.Global.ENABLE_QUICKBOOT,
