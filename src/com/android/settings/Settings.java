@@ -40,12 +40,9 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.nfc.NfcAdapter;
-import android.os.AsyncTask;
 import android.os.Bundle;
-import android.os.Handler;
 import android.os.INetworkManagementService;
 import android.os.RemoteException;
-import android.os.ResultReceiver;
 import android.os.ServiceManager;
 import android.os.UserHandle;
 import android.os.UserManager;
@@ -78,6 +75,8 @@ import com.android.internal.util.ArrayUtils;
 import com.android.settings.accessibility.AccessibilitySettings;
 import com.android.settings.accessibility.CaptionPropertiesFragment;
 import com.android.settings.accessibility.ToggleAccessibilityServicePreferenceFragment;
+import com.android.settings.accessibility.ToggleGlobalGesturePreferenceFragment;
+import com.android.settings.accessibility.ToggleScreenMagnificationPreferenceFragment;
 import com.android.settings.accounts.AccountSyncSettings;
 import com.android.settings.accounts.AuthenticatorHelper;
 import com.android.settings.accounts.ManageAccountsSettings;
@@ -111,6 +110,7 @@ import com.android.settings.nfc.PaymentSettings;
 import com.android.settings.print.PrintJobSettingsFragment;
 import com.android.settings.print.PrintServiceSettingsFragment;
 import com.android.settings.print.PrintSettingsFragment;
+import com.android.settings.privacyguard.PrivacyGuardPrefs;
 import com.android.settings.profiles.AppGroupConfig;
 import com.android.settings.profiles.ProfileConfig;
 import com.android.settings.profiles.ProfileEnabler;
@@ -157,7 +157,6 @@ public class Settings extends PreferenceActivity
     private static final String KEY_SCREEN_GESTURE_SETTINGS = "touch_screen_gesture_settings";
 
     private static final String EXTRA_UI_OPTIONS = "settings:ui_options";
-    private static final String EXTRA_DISABLE_SEARCH = "settings:disable_search";
 
     private static final String SAVE_KEY_CURRENT_HEADER = "com.android.settings.CURRENT_HEADER";
     private static final String SAVE_KEY_PARENT_HEADER = "com.android.settings.PARENT_HEADER";
@@ -169,15 +168,12 @@ public class Settings extends PreferenceActivity
 
     private static boolean sShowNoHomeNotice = false;
 
-    private boolean mDisableSearchIcon = false;
-
     private String mFragmentClass;
     private int mTopLevelHeaderId;
     private Header mFirstHeader;
     private Header mCurrentHeader;
     private Header mParentHeader;
     private boolean mInLocalHeaderSwitch;
-    private SettingsSearchFilterAdapter mSearchAdapter;
 
     // Show only these settings for restricted users
     private int[] SETTINGS_FOR_RESTRICTED = {
@@ -247,6 +243,11 @@ public class Settings extends PreferenceActivity
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        // We only want to inflate the search menu item in the top-level activity
+        if (getClass() != Settings.class) {
+            return false;
+        }
+
         MenuInflater inflater = getMenuInflater();
         inflater.inflate(R.menu.settings_search, menu);
         mSearchItem = menu.findItem(R.id.action_search);
@@ -272,8 +273,6 @@ public class Settings extends PreferenceActivity
             }
         });
 
-        new PopulateSearchSettingsTask().execute();
-
         ActionBar.LayoutParams layoutParams = new ActionBar.LayoutParams(
                 ActionBar.LayoutParams.WRAP_CONTENT, ActionBar.LayoutParams.MATCH_PARENT);
 
@@ -282,35 +281,9 @@ public class Settings extends PreferenceActivity
         mSearchBar.setThreshold(1);
         mSearchBar.setSingleLine(true);
         mSearchBar.setOnItemClickListener(this);
+        mSearchBar.setAdapter(new SettingsSearchFilterAdapter(this));
 
-        mSearchItem.setVisible(!mDisableSearchIcon);
         return true;
-    }
-
-    private class PopulateSearchSettingsTask extends
-            AsyncTask<Void, Void, ArrayList<SearchInfo>> {
-        @Override
-        protected ArrayList<SearchInfo> doInBackground(Void... param) {
-            return SearchPopulator.loadSearchData(Settings.this);
-        }
-
-        @Override
-        protected void onPostExecute(ArrayList<SearchInfo> infos) {
-            mSearchAdapter = new SettingsSearchFilterAdapter(Settings.this,
-                    R.layout.settings_search_complete_view, infos);
-            mSearchBar.setAdapter(mSearchAdapter);
-        }
-    };
-
-    private class SearchNotifier extends ResultReceiver {
-        public SearchNotifier(Handler handler) {
-            super(handler);
-        }
-
-        @Override
-        protected void onReceiveResult(int resultCode, Bundle resultData) {
-            new PopulateSearchSettingsTask().execute();
-        }
     }
 
     @Override
@@ -318,12 +291,6 @@ public class Settings extends PreferenceActivity
         if (getIntent().hasExtra(EXTRA_UI_OPTIONS)) {
             getWindow().setUiOptions(getIntent().getIntExtra(EXTRA_UI_OPTIONS, 0));
         }
-
-        if (getIntent().hasExtra(EXTRA_DISABLE_SEARCH)) {
-            mDisableSearchIcon = getIntent().getBooleanExtra(EXTRA_DISABLE_SEARCH, false);
-        }
-
-        startPopulatingSearchData();
 
         mAuthenticatorHelper = new AuthenticatorHelper();
         mAuthenticatorHelper.updateAuthDescriptions(this);
@@ -445,8 +412,12 @@ public class Settings extends PreferenceActivity
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        mSearchBar.clearFocus();
-        mSearchItem.collapseActionView();
+        if (mSearchBar != null) {
+            mSearchBar.clearFocus();
+        }
+        if (mSearchItem != null) {
+            mSearchItem.collapseActionView();
+        }
     }
 
     @Override
@@ -599,12 +570,6 @@ public class Settings extends PreferenceActivity
         }
     }
 
-    private void startPopulatingSearchData() {
-        Intent i = new Intent(this, SearchPopulator.class);
-        i.putExtra(SearchPopulator.EXTRA_NOTIFIER, new SearchNotifier(new Handler()));
-        startService(i);
-    }
-
     @Override
     public Intent getIntent() {
         Intent superIntent = super.getIntent();
@@ -701,22 +666,6 @@ public class Settings extends PreferenceActivity
                 PrintSettingsFragment.class.getName().equals(fragmentName) ||
                 PrintServiceSettingsFragment.class.getName().equals(fragmentName)) {
             intent.putExtra(EXTRA_UI_OPTIONS, ActivityInfo.UIOPTION_SPLIT_ACTION_BAR_WHEN_NARROW);
-            // Should also disable the search options here to not confuse
-            // the end user
-            intent.putExtra(EXTRA_DISABLE_SEARCH, true);
-        } else if (ApplicationSettings.class.getName().equals(fragmentName) ||
-                DataUsageSummary.class.getName().equals(fragmentName) ||
-                QuickSettingsTiles.class.getName().equals(fragmentName) ||
-                HeadsUpSettings.class.getName().equals(fragmentName) ||
-                PowerUsageSummary.class.getName().equals(fragmentName) ||
-                ThemeSettings.class.getName().equals(fragmentName) ||
-                ManageApplications.class.getName().equals(fragmentName) ||
-                NavBar.class.getName().equals(fragmentName) ||
-                NavRing.class.getName().equals(fragmentName) ||
-                PaymentSettings.class.getName().equals(fragmentName) ||
-                WifiDisplaySettings.class.getName().equals(fragmentName)) {
-            // Should force disable search options
-            intent.putExtra(EXTRA_DISABLE_SEARCH, true);
         }
         intent.setClass(this, SubSettings.class);
     }
@@ -1322,7 +1271,9 @@ public class Settings extends PreferenceActivity
 
     @Override
     public boolean onPreferenceStartFragment(PreferenceFragment caller, Preference pref) {
-        mSearchItem.collapseActionView();
+        if (mSearchItem != null) {
+            mSearchItem.collapseActionView();
+        }
         // Override the fragment title for Wallpaper settings
         int titleRes = pref.getTitleRes();
         if (pref.getFragment().equals(OwnerInfoSettings.class.getName())
